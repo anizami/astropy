@@ -21,7 +21,7 @@ __all__ = sorted([
     'Gaussian1D', 'GaussianAbsorption1D', 'Gaussian2D', 'Linear1D',
     'Lorentz1D', 'MexicanHat1D', 'MexicanHat2D', 'Scale', 'Redshift', 'Shift',
     'Sine1D', 'Trapezoid1D', 'TrapezoidDisk2D', 'Ring2D',
-    'custom_model_1d'
+    'custom_model_1d', 'BipolarGaussian'
 ])
 
 
@@ -1422,6 +1422,51 @@ class Moffat2D(Fittable2DModel):
         d_alpha = -amplitude * d_A * np.log(1 + rr_gg)
         d_gamma = 2 * amplitude * alpha * d_A * (rr_gg / (gamma * (1 + rr_gg)))
         return [d_A, d_x_0, d_y_0, d_gamma, d_alpha]
+
+
+class BipolarGaussian(Fittable1DModel):
+    """
+    A two-faced gaussian based on the version in stsdas.contrib.specfit
+
+    Parameters
+    ----------
+    norm : float
+        Total flux
+    mean : float
+        Maximum of the dual faced Gaussian
+    fwhm : float
+        Full width at half maximum. Units are in km/s
+    skew : float
+        Skew factor for sigma
+
+    Notes
+    -----
+    Effectively, this gaussian has two different sigmas on each side of the
+    mean. For values less than the mean, the sigma is as specified. For values
+    greater than the mean, the new sigma = skew * specified sigma
+
+    Units for fwhm are km/s. Norm represents total flux (presumably in
+    arbitrary units). Mean is the maximum of the dual faced gaussian. The units
+    of mean and x should be consistent.
+    """
+
+    norm = Parameter(default=1.)
+    mean = Parameter(default=0.)
+    fwhm = Parameter(default=1.)
+    skew = Parameter(default=1.)
+
+    @staticmethod
+    def evaluate(x, norm, mean, fwhm, skew):
+        """A two-faced Gaussian model function"""
+        sqrt2pi = np.sqrt(2. * np.pi)
+        sigma = mean * fwhm / c.to('km/s').value / 2.354820044
+        val = 0. * x
+        lowerx = (x > (mean - 10*sigma)) & (x < mean)
+        upperx = (x < (mean + 10*sigma)) & (x > mean)
+        term = - ((x-mean)/sigma) ** 2 / 2.
+        val[lowerx] = 2 * norm * np.exp(term[lowerx]) / sigma / sqrt2pi / (1. + skew)
+        val[upperx] = 2 * norm * np.exp(term[upperx]/skew**2) / sigma / sqrt2pi / (1. + skew)
+        return val
 
 
 @deprecated('1.0', alternative='astropy.modeling.models.custom_model',
