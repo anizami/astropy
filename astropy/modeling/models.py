@@ -14,6 +14,7 @@ from .rotations import *
 from .polynomial import *
 from .functional_models import *
 from .powerlaws import *
+from .extinction_models import *
 
 """
 Attach a docstring explaining constraints to all models which support them.

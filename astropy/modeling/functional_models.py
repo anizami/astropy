@@ -14,6 +14,7 @@ from .core import (Fittable1DModel, Fittable2DModel, Model,
 from .parameters import Parameter, InputParameterError
 from ..utils import deprecated
 from ..extern import six
+from ..constants import c
 
 __all__ = sorted([
     'AiryDisk2D', 'Moffat1D', 'Moffat2D', 'Box1D',
@@ -1424,6 +1425,7 @@ class Moffat2D(Fittable2DModel):
         return [d_A, d_x_0, d_y_0, d_gamma, d_alpha]
 
 
+# Code from Perry. The math doesn't seem right
 class BipolarGaussian(Fittable1DModel):
     """
     A two-faced gaussian based on the version in stsdas.contrib.specfit

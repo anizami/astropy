@@ -2,10 +2,7 @@
 """Extinction models.
 
 Classes are callables representing the corresponding extinction
-function with a fixed R_V. When calling an extinction function multiple
-times with the same R_V, it will be faster to create a class instance with
-fixed R_V and use that object to evaluate the extinction. See class
-documentation for details.
+function with a fixed R_V.
 """
 
 from __future__ import (absolute_import, unicode_literals, division,
@@ -20,19 +17,17 @@ import numpy as np
 from .core import (Fittable1DModel, Model, ModelDefinitionError,
                    custom_model)
 from .parameters import Parameter, InputParameterError
-
-from specutils import cextinction
+from . import cextinction
 
 try:
     import scipy
+    HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
-else:
-    HAS_SCIPY = True
 
 __all__ = ['Extinction_ccm89', 'Extinction_od94', 'Extinction_gcc09',
            'Extinction_f99', 'Extinction_fm07', 'extinction', 'Reddening',
-           'ExtinctionD03', 'ExtinctionWD01']
+           'Extinction_d03', 'Extinction_wd01', 'CCM']
 
 
 def _process_wave(wave):
@@ -106,11 +101,19 @@ class Extinction_ccm89(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
+    input_units = u.angstrom
+    output_units = u.mag
+
     @staticmethod
     def evaluate(x, a_v, r_v=3.1):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.ccm89(_process_wave(x).value, a_v, r_v)
-        return res.reshape(x.shape)
+        return res.reshape(x.shape) * u.mag
+
+    @classmethod
+    def reddening(cls, x):
+        results = cls.evauluate(x, a_v, r_v)
+        return 10**(0.4 * results)
 
 
 class Extinction_od94(Fittable1DModel):
@@ -153,11 +156,14 @@ class Extinction_od94(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
+    input_units = u.angstrom
+    output_units = u.mag
+
     @staticmethod
     def evaluate(x, a_v, r_v=3.1):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.od94(_process_wave(x).value, a_v, r_v)
-        return res.reshape(x.shape)
+        return res.reshape(x.shape) * u.mag
 
 
 class Extinction_gcc09(Fittable1DModel):
@@ -190,11 +196,14 @@ class Extinction_gcc09(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
+    input_units = u.angstrom
+    output_units = u.mag
+
     @staticmethod
     def evaluate(x, a_v, r_v=3.1):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.gcc09(_process_wave(x).value, a_v, r_v)
-        return res.reshape(x.shape)
+        return res.reshape(x.shape) * u.mag
 
 _f99_xknots = 1.e4 / np.array([np.inf, 26500., 12200., 6000., 5470.,
                                4670., 4110., 2700., 2600.])
@@ -235,6 +244,9 @@ class Extinction_f99(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
+    input_units = u.angstrom
+    output_units = u.mag
+
     @staticmethod
     def evaluate(x, a_v, r_v=3.1):
         if not HAS_SCIPY:
@@ -264,7 +276,7 @@ class Extinction_f99(Fittable1DModel):
             k = spleval(spline, 1. / wave[oirmask].to('micron'))
             res[oirmask] = a_v / r_v * (k + r_v)
 
-        return res.reshape(wave_shape)
+        return res.reshape(wave_shape) * u.mag
 
 
 # fm07 knots for spline
@@ -303,6 +315,9 @@ class Extinction_fm07(Fittable1DModel):
     """
     a_v = Parameter(default=0)
 
+    input_units = u.angstrom
+    output_units = u.mag
+
     @staticmethod
     def evaluate(x, a_v):
         if not HAS_SCIPY:
@@ -326,7 +341,7 @@ class Extinction_fm07(Fittable1DModel):
             k = spleval(_fm07_spline, (1. / wave[oirmask].to('micron')).value)
             res[oirmask] = a_v / _fm07_r_v * (k + _fm07_r_v)
 
-        return res.reshape(wave_shape)
+        return res.reshape(wave_shape) * u.mag
 
 
 prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
@@ -339,7 +354,7 @@ _d03_fnames = {'3.1': prefix + '_3.1A_60_D03_all.txt',
 del prefix
 
 
-class ExtinctionWD01(Fittable1DModel):
+class Extinction_wd01(Fittable1DModel):
     """Weingartner and Draine (2001) extinction model.
 
     The Weingartner & Draine (2001) [1]_ dust model.  This model is a
@@ -372,7 +387,7 @@ class ExtinctionWD01(Fittable1DModel):
     Create a callable that gives the extinction law for a given ``r_v``
     and use it:
 
-    >>> f = ExtinctionWD01(3.1)
+    >>> f = Extinction_wd01(3.1)
     >>> f(3000., a_v=1.)
 
     Arrays are also accepted and ``ebv`` can be specified instead of ``a_v``:
@@ -388,6 +403,9 @@ class ExtinctionWD01(Fittable1DModel):
 
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
+
+    input_units = u.angstrom
+    output_units = u.mag
 
     @staticmethod
     def evaluate(x, a_v, r_v=3.1):
@@ -431,13 +449,13 @@ class ExtinctionWD01(Fittable1DModel):
 
         res = a_v * spline(x.value)
 
-        return res.reshape(wave_shape)
+        return res.reshape(wave_shape) * u.mag
 
 
-class ExtinctionD03(ExtinctionWD01):
+class Extinction_d03(Extinction_wd01):
     """Draine (2003) extinction model.
 
-    The Draine (2003) [2]_ update to WD01 [1]_ where the
+    The Draine (2003) [2]_ update to wd01 [1]_ where the
     carbon/PAH abundances relative to 'wd01' have been reduced by a
     factor of 0.93.
 
@@ -458,7 +476,7 @@ class ExtinctionD03(ExtinctionWD01):
     Create a callable that gives the extinction law for a given ``r_v``
     and use it:
 
-    >>> f = ExtinctionWD01(3.1)
+    >>> f = Extinction_wd01(3.1)
     >>> f(3000., a_v=1.)
 
     Arrays are also accepted and ``ebv`` can be specified instead of ``a_v``:
@@ -472,16 +490,23 @@ class ExtinctionD03(ExtinctionWD01):
 
     """
 
-    def __init__(self, a_v, r_v):
+    a_v = Parameter(default=0)
+    r_v = Parameter(default=3.1)
+
+    input_units = u.angstrom
+    output_units = u.mag
+
+    @staticmethod
+    def evaluate(x, a_v, r_v):
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
         from scipy.interpolate import interp1d
 
-        super(ExtinctionD03, self).__init__(a_v, r_v)
+        # super(Extinction_d03, self).__init__(a_v, r_v)
 
         fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
-            float(item), self.r_v)]
+            float(item), r_v)]
 
         if len(fname_key) == 0:
             raise ValueError("model only defined for r_v in [3.1, 4.0, 5.5]")
@@ -504,38 +529,25 @@ class ExtinctionD03(ExtinctionWD01):
         # Create a spline just to get normalization.
         spline = interp1d(xknots, cknots)
         cknots = cknots / spline((1. / (5495. * u.angstrom)).to('1/micron').value)  # Normalize cknots.
-        self._spline = interp1d(xknots, cknots)
+        spline = interp1d(xknots, cknots)
 
+        wave_shape = x.shape
+        wave = _process_wave(x)
 
-def extinction_d03(wave, a_v, r_v=3.1):
-    """Draine (2003) extinction model.
+        x = (1 / wave).to('1/micron')
 
-    The Draine (2003) [2]_ update to WD01 [1]_ where the
-    carbon/PAH abundances relative to 'wd01' have been reduced by a
-    factor of 0.93.
+        res = a_v * spline(x.value)
 
-    The dust model gives the extinction per H nucleon.  For
-    consistency with other extinction laws we normalize this
-    extinction law so that it is equal to 1.0 at 5495 angstroms.
+        return res.reshape(wave_shape) * u.mag
 
-    .. note :: Model is not an analytic  function of R_V. Only ``r_v``
-               values of 3.1, 4.0 and  5.5 are accepted.
-
-    References
-    ----------
-    .. [1] Weingartner, J.C. & Draine, B.T. 2001, ApJ, 548, 296
-    .. [2] Draine, B.T. 2003, ARA&A, 41, 241
-    """
-    f = ExtinctionD03(a_v, r_v)
-    return f(wave)
 
 _extinction_models = {'ccm89': Extinction_ccm89,
                       'od94': Extinction_od94,
                       'gcc09': Extinction_gcc09,
                       'f99': Extinction_f99,
                       'fm07': Extinction_fm07,
-                      'wd01': ExtinctionWD01,
-                      'd03': ExtinctionD03}
+                      'wd01': Extinction_wd01,
+                      'd03': Extinction_d03}
 
 
 def extinction(wave, a_v, r_v=3.1, model='od94'):
@@ -653,9 +665,11 @@ def extinction(wave, a_v, r_v=3.1, model='od94'):
     if model == 'fm07':
         if not np.isclose(r_v, 3.1):
             raise ValueError('r_v must be 3.1 for fm07 model')
-        return _extinction_models[model](wave, a_v=a_v)
+        model = _extinction_models[model](a_v=a_v)
+        # return _extinction_models[model](wave, a_v=a_v)
     else:
-        return _extinction_models[model](wave, a_v=a_v, r_v=r_v)
+        model = _extinction_models[model](a_v=a_v, r_v=r_v)
+    return model(wave)
 
 
 class Reddening(Fittable1DModel):
@@ -703,6 +717,9 @@ class CCM(Fittable1DModel):
     ebmv : float, optional
             e(B-V) in magnitudes
     '''
+    r_v = Parameter(default=3.5)
+    ebmv = Parameter(default=1.)
+
     @staticmethod
     def evaluate(x, ebmv=1, r_v=3.5):
         x = 1./x
@@ -738,4 +755,4 @@ class CCM(Fittable1DModel):
         a[fuvmask] = -1.073 - 0.628 * xfuv + 0.137 * xfuv**2 - 0.070 * xfuv**3
         b[fuvmask] = 13.670 + 4.257 * xfuv - 0.420 * xfuv**2 + 0.374 * xfuv**3
 
-        return 10 ** (-0.4 * ebmv * (rv * a + b))
+        return 10 ** (-0.4 * ebmv * (r_v * a + b))
