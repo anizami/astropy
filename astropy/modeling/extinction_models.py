@@ -259,17 +259,6 @@ class Extinction_f99(ExtinctionModel):
         return res.reshape(wave_shape) * u.mag
 
 
-# fm07 knots for spline
-_fm07_r_v = 3.1
-_fm07_xknots = np.array([0., 0.25, 0.50, 0.75, 1., 1.e4/5530., 1.e4/4000.,
-                        1.e4/3300., 1.e4/2700., 1.e4/2600.])
-_fm07_kknots = cextinction.fm07kknots(_fm07_xknots)
-try:
-    _fm07_spline = splmake(_fm07_xknots, _fm07_kknots, order=3)
-except ImportError:
-    pass
-
-
 class Extinction_fm07(ExtinctionModel):
     """Fitzpatrick & Massa (2007) extinction model for R_V = 3.1.
 
@@ -297,6 +286,13 @@ class Extinction_fm07(ExtinctionModel):
     def evaluate(self, x, a_v):
         if not HAS_SCIPY:
             raise ImportError('To use this model scipy needs to be installed')
+
+        # fm07 knots for spline
+        _fm07_r_v = 3.1
+        _fm07_xknots = np.array([0., 0.25, 0.50, 0.75, 1., 1.e4/5530., 1.e4/4000.,
+                                1.e4/3300., 1.e4/2700., 1.e4/2600.])
+        _fm07_kknots = cextinction.fm07kknots(_fm07_xknots)
+        _fm07_spline = splmake(_fm07_xknots, _fm07_kknots, order=3)
 
         wave_shape = x.shape
         wave = self._process_wave(x)
@@ -328,7 +324,6 @@ class Extinction_fm07(ExtinctionModel):
             Total V band extinction, in magnitudes. A(V) = R_V * E(B-V).
         r_v : float, optional
             R_V parameter. Default is the standard Milky Way average of 3.1.
-        model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07'}, optional
 
         Returns
         -------
@@ -341,17 +336,6 @@ class Extinction_fm07(ExtinctionModel):
         """
         result = self.evaluate(x, a_v).value
         return 10**(0.4 * result) * u.mag
-
-
-
-prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
-_wd01_fnames = {'3.1': prefix + '_3.1B_60.txt',
-                '4.0': prefix + '_4.0B_40.txt',
-                '5.5': prefix + '_5.5B_30.txt'}
-_d03_fnames = {'3.1': prefix + '_3.1A_60_D03_all.txt',
-               '4.0': prefix + '_4.0A_40_D03_all.txt',
-               '5.5': prefix + '_5.5A_30_D03_all.txt'}
-del prefix
 
 
 class Extinction_wd01(ExtinctionModel):
@@ -399,6 +383,10 @@ class Extinction_wd01(ExtinctionModel):
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
+        prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
+        _wd01_fnames = {'3.1': prefix + '_3.1B_60.txt',
+                        '4.0': prefix + '_4.0B_40.txt',
+                        '5.5': prefix + '_5.5B_30.txt'}
         fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
             float(item), r_v)]
 
@@ -471,7 +459,12 @@ class Extinction_d03(ExtinctionModel):
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
-        fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
+        prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
+        _d03_fnames = {'3.1': prefix + '_3.1A_60_D03_all.txt',
+                       '4.0': prefix + '_4.0A_40_D03_all.txt',
+                       '5.5': prefix + '_5.5A_30_D03_all.txt'}
+
+        fname_key = [item for item in _d03_fnames.keys() if np.isclose(
             float(item), r_v)]
 
         if len(fname_key) == 0:
