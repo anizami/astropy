@@ -10,7 +10,8 @@ from __future__ import (absolute_import, unicode_literals, division,
 
 from os import path
 from ..io import ascii
-from ..utils.data import get_package_data_filename
+from ..utils import data as apydata
+from ..utils.data import get_pkg_data_filename
 from .. import units as u
 import numpy as np
 
@@ -21,41 +22,64 @@ from . import cextinction
 try:
     import scipy
     HAS_SCIPY = True
+    from scipy.interpolate import interp1d, splmake, spleval
 except ImportError:
     HAS_SCIPY = False
 
 __all__ = ['Extinction_ccm89', 'Extinction_od94', 'Extinction_gcc09',
-           'Extinction_f99', 'Extinction_fm07', 'extinction', 'Reddening',
-           'Extinction_d03', 'Extinction_wd01', 'CCM']
+           'Extinction_f99', 'Extinction_fm07', 'Extinction_d03',
+           'Extinction_wd01', 'CCM']
 
 
-def _process_wave(wave):
-    return wave.to(u.angstrom).flatten()
+class ExtinctionModel(Fittable1DModel):
+    """
+    Base class for one-dimensional Extinction models.
+
+    This class provides an easier interface to defining new extinction models
+    that have the same input parameters.
+    """
+
+    a_v = Parameter(default=1.)
+    r_v = Parameter(default=3.1)
+
+    input_units = u.angstrom
+    output_units = u.mag
+
+    def _process_wave(self, wave):
+        return wave.to(u.angstrom).flatten()
+
+    def _check_wave(self, wave, minwave, maxwave):
+        if np.any((wave < minwave) | (wave > maxwave)):
+            raise ValueError('Wavelengths must be between {0:.2f} and {1:.2f} '
+                             'angstroms'.format(minwave, maxwave))
+
+    def reddening(self, x, a_v=a_v.default, r_v=r_v.default):
+        """Inverse of flux transmission fraction at given wavelength(s).
+
+        Parameters
+        ----------
+        x : float or list_like
+            Wavelength(s) in angstroms at which to evaluate the reddening.
+        a_v : float
+            Total V band extinction, in magnitudes. A(V) = R_V * E(B-V).
+        r_v : float, optional
+            R_V parameter. Default is the standard Milky Way average of 3.1.
+        model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07'}, optional
+
+        Returns
+        -------
+        reddening : float or `~numpy.ndarray`
+            Inverse of flux transmission fraction, equivalent to
+            ``10**(0.4 * extinction(wave))``. To deredden spectra,
+            multiply flux values by these value(s). To redden spectra, divide
+            flux values by these value(s).
+
+        """
+        result = self.evaluate(x, a_v, r_v).value
+        return 10**(0.4 * result) * u.mag
 
 
-def _process_inputs(wave, ebv, a_v, r_v):
-    if (a_v is None) and (ebv is None):
-        raise ValueError('Must specify either a_v or ebv')
-    if (a_v is not None) and (ebv is not None):
-        raise ValueError('Cannot specify both a_v and ebv')
-    if a_v is None:
-        a_v = ebv * r_v
-
-    scalar = np.isscalar(wave)
-    wave = np.atleast_1d(wave)
-    if wave.ndim > 2:
-        raise ValueError("wave cannot be more than 1-d")
-
-    return wave, scalar, a_v
-
-
-def _check_wave(wave, minwave, maxwave):
-    if np.any((wave < minwave) | (wave > maxwave)):
-        raise ValueError('Wavelengths must be between {0:.2f} and {1:.2f} '
-                         'angstroms'.format(minwave, maxwave))
-
-
-class Extinction_ccm89(Fittable1DModel):
+class Extinction_ccm89(ExtinctionModel):
     """Cardelli, Clayton, & Mathis (1989) extinction model.
 
     The parameters given in the original paper [1]_ are used.
@@ -97,25 +121,13 @@ class Extinction_ccm89(Fittable1DModel):
     .. [1] Cardelli, J. A., Clayton, G. C., & Mathis, J. S. 1989, ApJ, 345, 245
     """
 
-    a_v = Parameter(default=0)
-    r_v = Parameter(default=3.1)
-
-    input_units = u.angstrom
-    output_units = u.mag
-
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
-        res = cextinction.ccm89(_process_wave(x).value, a_v, r_v)
+    def evaluate(self, x, a_v, r_v):
+        self._check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
+        res = cextinction.ccm89(self._process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
 
-    @classmethod
-    def reddening(cls, x):
-        results = cls.evauluate(x, a_v, r_v)
-        return 10**(0.4 * results)
 
-
-class Extinction_od94(Fittable1DModel):
+class Extinction_od94(ExtinctionModel):
     """O'Donnell (1994) extinction model.
 
     Like Cardelli, Clayton, & Mathis (1989) [1]_ but using the O'Donnell
@@ -152,20 +164,13 @@ class Extinction_od94(Fittable1DModel):
     .. [5] Valencic et al. 2004, ApJ, 616, 912
     """
 
-    a_v = Parameter(default=0)
-    r_v = Parameter(default=3.1)
-
-    input_units = u.angstrom
-    output_units = u.mag
-
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
-        res = cextinction.od94(_process_wave(x).value, a_v, r_v)
+    def evaluate(self, x, a_v, r_v):
+        self._check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
+        res = cextinction.od94(self._process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
 
 
-class Extinction_gcc09(Fittable1DModel):
+class Extinction_gcc09(ExtinctionModel):
     """Gordon, Cartledge, & Clayton (2009) extinction model.
 
     Uses the UV coefficients of Gordon, Cartledge, & Clayton (2009)
@@ -192,23 +197,16 @@ class Extinction_gcc09(Fittable1DModel):
     .. [1] Gordon, K. D., Cartledge, S., & Clayton, G. C. 2009, ApJ, 705, 1320
     """
 
-    a_v = Parameter(default=0)
-    r_v = Parameter(default=3.1)
-
-    input_units = u.m
-    output_units = u.mag
-
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
-        res = cextinction.gcc09(_process_wave(x).value, a_v, r_v)
+    def evaluate(self, x, a_v, r_v):
+        self._check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
+        res = cextinction.gcc09(self._process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
 
 _f99_xknots = 1.e4 / np.array([np.inf, 26500., 12200., 6000., 5470.,
                                4670., 4110., 2700., 2600.])
 
 
-class Extinction_f99(Fittable1DModel):
+class Extinction_f99(ExtinctionModel):
     """
     Fitzpatrick (1999) [1]_ model which relies on the parametrization
     of Fitzpatrick & Massa (1990) [2]_ in the UV (below 2700 A) and
@@ -225,42 +223,25 @@ class Extinction_f99(Fittable1DModel):
     r_v : float, optional
         R_V parameter. Default is the standard Milky Way average of 3.1
 
-    Examples
-    --------
-    Create a callable that gives the extinction law for a given ``r_v``
-    and use it:
-
-    >>> f = ExtinctionF99(3.1)
-    >>> f(3000., a_v=1.)
-    1.7993995521481463
-
     References
     ----------
     .. [1] Fitzpatrick, E. L. 1999, PASP, 111, 63
     .. [2] Fitzpatrick, E. L. & Massa, D. 1990, ApJS, 72, 163
 
     """
-    a_v = Parameter(default=0)
-    r_v = Parameter(default=3.1)
 
-    input_units = u.angstrom
-    output_units = u.mag
-
-    @staticmethod
-    def evaluate(x, a_v, r_v):
+    def evaluate(self, x, a_v, r_v):
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
-
-        from scipy.interpolate import splmake, spleval
 
         kknots = cextinction.f99kknots(_f99_xknots, r_v)
 
         spline = splmake(_f99_xknots, kknots, order=3)
 
         wave_shape = x.shape
-        wave = _process_wave(x)
+        wave = self._process_wave(x)
 
-        _check_wave(wave, 909.091 * u.angstrom, 6. * u.micron)
+        self._check_wave(wave, 909.091 * u.angstrom, 6. * u.micron)
 
         res = np.empty_like(wave.__array__(), dtype=np.float64)
 
@@ -284,13 +265,12 @@ _fm07_xknots = np.array([0., 0.25, 0.50, 0.75, 1., 1.e4/5530., 1.e4/4000.,
                         1.e4/3300., 1.e4/2700., 1.e4/2600.])
 _fm07_kknots = cextinction.fm07kknots(_fm07_xknots)
 try:
-    from scipy.interpolate import splmake
     _fm07_spline = splmake(_fm07_xknots, _fm07_kknots, order=3)
 except ImportError:
     pass
 
 
-class Extinction_fm07(Fittable1DModel):
+class Extinction_fm07(ExtinctionModel):
     """Fitzpatrick & Massa (2007) extinction model for R_V = 3.1.
 
     The Fitzpatrick & Massa (2007) [1]_ model, which has a slightly
@@ -312,21 +292,16 @@ class Extinction_fm07(Fittable1DModel):
     .. [2] Gordon, K. D., Cartledge, S., & Clayton, G. C. 2009, ApJ, 705, 1320
     .. [3] Fitzpatrick, E. L. 1999, PASP, 111, 63
     """
-    a_v = Parameter(default=0)
+    a_v = Parameter(default=1.)
 
-    input_units = u.angstrom
-    output_units = u.mag
-
-    @staticmethod
-    def evaluate(x, a_v):
+    def evaluate(self, x, a_v):
         if not HAS_SCIPY:
             raise ImportError('To use this model scipy needs to be installed')
-        from scipy.interpolate import spleval
 
         wave_shape = x.shape
-        wave = _process_wave(x)
+        wave = self._process_wave(x)
 
-        _check_wave(wave, 909.091 * u.angstrom, 6.0 * u.micron)
+        self._check_wave(wave, 909.091 * u.angstrom, 6.0 * u.micron)
         res = np.empty_like(wave.__array__(), dtype=np.float64)
 
         # Simple analytic function in the UV
@@ -342,6 +317,32 @@ class Extinction_fm07(Fittable1DModel):
 
         return res.reshape(wave_shape) * u.mag
 
+    def reddening(self, x, a_v=a_v.default):
+        """Inverse of flux transmission fraction at given wavelength(s).
+
+        Parameters
+        ----------
+        x : float or list_like
+            Wavelength(s) in angstroms at which to evaluate the reddening.
+        a_v : float
+            Total V band extinction, in magnitudes. A(V) = R_V * E(B-V).
+        r_v : float, optional
+            R_V parameter. Default is the standard Milky Way average of 3.1.
+        model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07'}, optional
+
+        Returns
+        -------
+        reddening : float or `~numpy.ndarray`
+            Inverse of flux transmission fraction, equivalent to
+            ``10**(0.4 * extinction(wave))``. To deredden spectra,
+            multiply flux values by these value(s). To redden spectra, divide
+            flux values by these value(s).
+
+        """
+        result = self.evaluate(x, a_v).value
+        return 10**(0.4 * result) * u.mag
+
+
 
 prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
 _wd01_fnames = {'3.1': prefix + '_3.1B_60.txt',
@@ -353,7 +354,7 @@ _d03_fnames = {'3.1': prefix + '_3.1A_60_D03_all.txt',
 del prefix
 
 
-class Extinction_wd01(Fittable1DModel):
+class Extinction_wd01(ExtinctionModel):
     """Weingartner and Draine (2001) extinction model.
 
     The Weingartner & Draine (2001) [1]_ dust model.  This model is a
@@ -381,18 +382,6 @@ class Extinction_wd01(Fittable1DModel):
     r_v : float
         Relation between specific and total extinction, ``a_v = r_v * ebv``.
 
-    Examples
-    --------
-    Create a callable that gives the extinction law for a given ``r_v``
-    and use it:
-
-    >>> f = Extinction_wd01(3.1)
-    >>> f(3000., a_v=1.)
-
-    Arrays are also accepted and ``ebv`` can be specified instead of ``a_v``:
-
-    >>> f([3000., 4000.], ebv=1./3.1)
-
     References
     ----------
     .. [1] Weingartner, J.C. & Draine, B.T. 2001, ApJ, 548, 296
@@ -403,16 +392,12 @@ class Extinction_wd01(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
-    input_units = u.angstrom
-    output_units = u.mag
+    def __init__(self, a_v=a_v.default, r_v=r_v.default, **kwargs):
 
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        # TODO: Need to refactor this and make spline some instance property
+        super(Extinction_wd01, self).__init__(a_v=a_v, r_v=r_v, **kwargs)
+
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
-
-        from scipy.interpolate import interp1d
 
         fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
             float(item), r_v)]
@@ -440,19 +425,18 @@ class Extinction_wd01(Fittable1DModel):
         # Create a spline just to get normalization.
         spline = interp1d(xknots, cknots)
         cknots = cknots / spline(1.e4 / 5495.)  # Normalize cknots.
-        spline = interp1d(xknots, cknots)
+        self._spline = interp1d(xknots, cknots)
 
+    def evaluate(self, x, a_v, r_v):
         wave_shape = x.shape
-        wave = _process_wave(x)
-
+        wave = self._process_wave(x)
         x = (1 / wave).to('1/micron')
-
-        res = a_v * spline(x.value)
+        res = a_v * self._spline(x.value)
 
         return res.reshape(wave_shape) * u.mag
 
 
-class Extinction_d03(Fittable1DModel):
+class Extinction_d03(ExtinctionModel):
     """Draine (2003) extinction model.
 
     The Draine (2003) [2]_ update to wd01 [1]_ where the
@@ -471,18 +455,6 @@ class Extinction_d03(Fittable1DModel):
     .. note :: Model is not an analytic  function of R_V. Only ``r_v``
                values of 3.1, 4.0 and  5.5 are accepted.
 
-    Examples
-    --------
-    Create a callable that gives the extinction law for a given ``r_v``
-    and use it:
-
-    >>> f = Extinction_wd01(3.1)
-    >>> f(3000., a_v=1.)
-
-    Arrays are also accepted and ``ebv`` can be specified instead of ``a_v``:
-
-    >>> f([3000., 4000.], ebv=1./3.1)
-
     References
     ----------
     .. [1] Weingartner, J.C. & Draine, B.T. 2001, ApJ, 548, 296
@@ -493,16 +465,11 @@ class Extinction_d03(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
-    input_units = u.angstrom
-    output_units = u.mag
+    def __init__(self, a_v=a_v.default, r_v=r_v.default, **kwargs):
 
-    @staticmethod
-    def evaluate(x, a_v, r_v):
-        # TODO: Need to refactor this and make spline some instance property
+        super(Extinction_d03, self).__init__(a_v=a_v, r_v=r_v, **kwargs)
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
-
-        from scipy.interpolate import interp1d
 
         fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
             float(item), r_v)]
@@ -516,7 +483,6 @@ class Extinction_d03(Fittable1DModel):
                              ' r_vs [3.1, 4.0, 5.5] - unexpected code error')
 
         fname = get_pkg_data_filename(fname)
-
         data = ascii.read(fname, Reader=ascii.FixedWidth, data_start=67,
                           names=['wave', 'albedo', 'avg_cos', 'C_ext',
                                  'K_abs', 'avg_cos_sq', 'comment'],
@@ -528,177 +494,14 @@ class Extinction_d03(Fittable1DModel):
         # Create a spline just to get normalization.
         spline = interp1d(xknots, cknots)
         cknots = cknots / spline((1. / (5495. * u.angstrom)).to('1/micron').value)  # Normalize cknots.
-        spline = interp1d(xknots, cknots)
+        self._spline = interp1d(xknots, cknots)
 
+    def evaluate(self, x, a_v, r_v):
         wave_shape = x.shape
-        wave = _process_wave(x)
-
+        wave = self._process_wave(x)
         x = (1 / wave).to('1/micron')
-
-        res = a_v * spline(x.value)
-
+        res = a_v * self._spline(x.value)
         return res.reshape(wave_shape) * u.mag
-
-
-_extinction_models = {'ccm89': Extinction_ccm89,
-                      'od94': Extinction_od94,
-                      'gcc09': Extinction_gcc09,
-                      'f99': Extinction_f99,
-                      'fm07': Extinction_fm07,
-                      'wd01': Extinction_wd01,
-                      'd03': Extinction_d03}
-
-
-def extinction(wave, a_v, r_v=3.1, model='od94'):
-    """Generic interface for all extinction model functions.
-
-    Parameters
-    ----------
-    wave : float or list_like
-        Wavelength(s) in angstroms.
-    a_v : float
-        Total V band extinction A(V), in magnitudes. A(V) = R_V * E(B-V).
-    r_v : float, optional
-        R_V parameter. Default is the standard Milky Way average of 3.1.
-    model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07', 'wd01', d03'}, optional
-        Use function ``extinction_[model]``. E.g., for 'ccm89', the function
-        ``Extinction_ccm89`` is used.
-
-    Returns
-    -------
-    extinction : float or `~numpy.ndarray`
-        Extinction in magnitudes at given wavelengths.
-
-    See Also
-    --------
-    Extinction_ccm89
-    Extinction_od94
-    Extinction_gcc09
-    Extinction_f99
-    Extinction_fm07
-    Extinction_wd01
-    Extinction_d03
-    Reddening
-
-    Notes
-    -----
-
-    **Visual comparison of models**
-
-    The plot below shows a comparison of the models for
-    ``r_v=3.1``. The shaded regions show the limits of claimed
-    validity for the f99 model (> 1150 A) and the ccm89/od94 models (>
-    1250 A). The vertical dotted lines indicate transition wavelengths in
-    the models (3030.3 A and 9090.9 A for ccm89, od94 and gcc09;
-    2700. A for f99, fm07).
-
-    .. plot::
-
-       import numpy as np
-       import matplotlib.pyplot as plt
-       from mpl_toolkits.axes_grid1 import make_axes_locatable
-       from specutils.extinction import extinction
-
-       models = ['ccm89', 'od94', 'gcc09', 'f99', 'fm07','wd01','d03']
-       wave = np.logspace(np.log10(910.), np.log10(30000.), 2000)
-       a_lambda = {model: extinction(wave, a_v=1., model=model)
-                   for model in models}
-
-       fig = plt.figure(figsize=(8.5, 6.))
-
-       ax = plt.axes()
-       for model in models:
-           plt.plot(wave, a_lambda[model], label=model)
-       plt.axvline(x=2700., ls=':', c='k')
-       plt.axvline(x=3030.3030, ls=':', c='k')
-       plt.axvline(x=9090.9091, ls=':', c='k')
-       plt.axvspan(wave[0], 1150., fc='0.8', ec='none', zorder=-1000)
-       plt.axvspan(1150., 1250., fc='0.9', ec='none', zorder=-1000)
-       plt.text(0.67, 0.95, '$R_V = 3.1$', transform=ax.transAxes, va='top',
-                size='x-large')
-       plt.ylabel('Extinction ($A(\lambda)$ / $A_V$)')
-       plt.legend()
-       plt.setp(ax.get_xticklabels(), visible=False)
-
-       divider = make_axes_locatable(ax)
-       axresid = divider.append_axes("bottom", size=2.0, pad=0.2, sharex=ax)
-       for model in models:
-           plt.plot(wave, a_lambda[model] - a_lambda['f99'])
-       plt.axvline(x=2700., ls=':', c='k')
-       plt.axvline(x=3030.3030, ls=':', c='k')
-       plt.axvline(x=9090.9091, ls=':', c='k')
-       plt.axvspan(wave[0], 1150., fc='0.8', ec='none', zorder=-1000)
-       plt.axvspan(1150., 1250., fc='0.9', ec='none', zorder=-1000)
-       plt.xlim(wave[0], wave[-1])
-       plt.ylim(ymin=-0.4,ymax=0.4)
-       plt.ylabel('residual from f99')
-       plt.xlabel('Wavelength ($\AA$)')
-
-       ax.set_xscale('log')
-       axresid.set_xscale('log')
-       plt.tight_layout()
-
-       fig.show()
-
-    Examples
-    --------
-
-    >>> wave = [2000., 2500., 3000.]
-    >>> extinction(wave, a_v=1., r_v=3.1, model='f99')
-    array([ 2.76225609,  2.27590036,  1.79939955])
-
-    The extinction scales linearly with ``a_v``. This means
-    that when calculating extinction for multiple values of ``a_v``, one can compute extinction ahead of time for a given set of
-    wavelengths and then scale by ``a_v`` or ``ebv`` later.  For example:
-
-    >>> a_lambda_over_a_v = extinction(wave, a_v=1.)
-    >>> a_v = 0.5
-    >>> a_lambda = a_v * a_lambda_over_a_v
-
-    """
-
-    model = model.lower()
-    if model not in _extinction_models:
-        raise ValueError('unknown model: {0}'.format(model))
-
-    if model == 'fm07':
-        if not np.isclose(r_v, 3.1):
-            raise ValueError('r_v must be 3.1 for fm07 model')
-        model = _extinction_models[model](a_v=a_v)
-    else:
-        model = _extinction_models[model](a_v=a_v, r_v=r_v)
-    return model(wave)
-
-
-class Reddening(Fittable1DModel):
-    """Inverse of flux transmission fraction at given wavelength(s).
-
-    Parameters
-    ----------
-    wave : float or list_like
-        Wavelength(s) in angstroms at which to evaluate the reddening.
-    a_v : float
-        Total V band extinction, in magnitudes. A(V) = R_V * E(B-V).
-    r_v : float, optional
-        R_V parameter. Default is the standard Milky Way average of 3.1.
-    model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07'}, optional
-
-    Returns
-    -------
-    reddening : float or `~numpy.ndarray`
-        Inverse of flux transmission fraction, equivalent to
-        ``10**(0.4 * extinction(wave))``. To deredden spectra,
-        multiply flux values by these value(s). To redden spectra, divide
-        flux values by these value(s).
-
-    """
-    a_v = Parameter(default=0)
-    r_v = Parameter(default=3.1)
-
-    @staticmethod
-    def evaluate(x, a_v, r_v, model='od94'):
-        result = extinction(x, a_v, r_v=r_v, model=model).value
-        return 10**(0.4 * result)
 
 
 class CCM(Fittable1DModel):
