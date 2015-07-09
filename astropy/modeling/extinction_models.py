@@ -10,12 +10,11 @@ from __future__ import (absolute_import, unicode_literals, division,
 
 from os import path
 from ..io import ascii
-from ..utils import data as apydata
+from ..utils.data import get_package_data_filename
 from .. import units as u
 import numpy as np
 
-from .core import (Fittable1DModel, Model, ModelDefinitionError,
-                   custom_model)
+from .core import (Fittable1DModel)
 from .parameters import Parameter, InputParameterError
 from . import cextinction
 
@@ -105,7 +104,7 @@ class Extinction_ccm89(Fittable1DModel):
     output_units = u.mag
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1):
+    def evaluate(x, a_v, r_v):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.ccm89(_process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
@@ -160,7 +159,7 @@ class Extinction_od94(Fittable1DModel):
     output_units = u.mag
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1):
+    def evaluate(x, a_v, r_v):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.od94(_process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
@@ -196,11 +195,11 @@ class Extinction_gcc09(Fittable1DModel):
     a_v = Parameter(default=0)
     r_v = Parameter(default=3.1)
 
-    input_units = u.angstrom
+    input_units = u.m
     output_units = u.mag
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1):
+    def evaluate(x, a_v, r_v):
         _check_wave(x, 909.091 * u.angstrom, 33333.333 * u.angstrom)
         res = cextinction.gcc09(_process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
@@ -248,7 +247,7 @@ class Extinction_f99(Fittable1DModel):
     output_units = u.mag
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1):
+    def evaluate(x, a_v, r_v):
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
@@ -408,7 +407,8 @@ class Extinction_wd01(Fittable1DModel):
     output_units = u.mag
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1):
+    def evaluate(x, a_v, r_v):
+        # TODO: Need to refactor this and make spline some instance property
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
@@ -425,7 +425,7 @@ class Extinction_wd01(Fittable1DModel):
             raise ValueError('The given float {0} matches multiple available'
                              ' r_vs [3.1, 4.0, 5.5] - unexpected code error')
 
-        fname = apydata.get_pkg_data_filename(fname)
+        fname = get_pkg_data_filename(fname)
         data = ascii.read(fname, Reader=ascii.FixedWidth, data_start=51,
                           names=['wave', 'albedo', 'avg_cos', 'C_ext',
                                  'K_abs'],
@@ -452,7 +452,7 @@ class Extinction_wd01(Fittable1DModel):
         return res.reshape(wave_shape) * u.mag
 
 
-class Extinction_d03(Extinction_wd01):
+class Extinction_d03(Fittable1DModel):
     """Draine (2003) extinction model.
 
     The Draine (2003) [2]_ update to wd01 [1]_ where the
@@ -498,12 +498,11 @@ class Extinction_d03(Extinction_wd01):
 
     @staticmethod
     def evaluate(x, a_v, r_v):
+        # TODO: Need to refactor this and make spline some instance property
         if not HAS_SCIPY:
             raise ImportError('To use this function scipy needs to be installed')
 
         from scipy.interpolate import interp1d
-
-        # super(Extinction_d03, self).__init__(a_v, r_v)
 
         fname_key = [item for item in _wd01_fnames.keys() if np.isclose(
             float(item), r_v)]
@@ -516,7 +515,7 @@ class Extinction_d03(Extinction_wd01):
             raise ValueError('The given float {0} matches multiple available'
                              ' r_vs [3.1, 4.0, 5.5] - unexpected code error')
 
-        fname = apydata.get_pkg_data_filename(fname)
+        fname = get_pkg_data_filename(fname)
 
         data = ascii.read(fname, Reader=ascii.FixedWidth, data_start=67,
                           names=['wave', 'albedo', 'avg_cos', 'C_ext',
@@ -666,7 +665,6 @@ def extinction(wave, a_v, r_v=3.1, model='od94'):
         if not np.isclose(r_v, 3.1):
             raise ValueError('r_v must be 3.1 for fm07 model')
         model = _extinction_models[model](a_v=a_v)
-        # return _extinction_models[model](wave, a_v=a_v)
     else:
         model = _extinction_models[model](a_v=a_v, r_v=r_v)
     return model(wave)
@@ -694,13 +692,13 @@ class Reddening(Fittable1DModel):
         flux values by these value(s).
 
     """
-    # a_v = Parameter(default=0)
-    # r_v = Parameter(default=3.1)
-    # model = Parameter('od94')
+    a_v = Parameter(default=0)
+    r_v = Parameter(default=3.1)
 
     @staticmethod
-    def evaluate(x, a_v, r_v=3.1, model='od94'):
-        return 10**(0.4 * extinction(x, a_v, r_v=r_v, model=model))
+    def evaluate(x, a_v, r_v, model='od94'):
+        result = extinction(x, a_v, r_v=r_v, model=model).value
+        return 10**(0.4 * result)
 
 
 class CCM(Fittable1DModel):
@@ -721,7 +719,7 @@ class CCM(Fittable1DModel):
     ebmv = Parameter(default=1.)
 
     @staticmethod
-    def evaluate(x, ebmv=1, r_v=3.5):
+    def evaluate(x, ebmv, r_v):
         x = 1./x
         irmask = (x >= 0.3) & (x <= 1.1)
         omask = (x > 1.1) & (x <= 3.3)
