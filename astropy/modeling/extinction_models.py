@@ -60,17 +60,17 @@ class ExtinctionModel(Fittable1DModel):
         ----------
         x : float or list_like
             Wavelength(s) in angstroms at which to evaluate the reddening.
-        a_v : float
+        a_v : float, optional
             Total V band extinction, in magnitudes. A(V) = R_V * E(B-V).
+            Default value is from the model's a_v parameter.
         r_v : float, optional
             R_V parameter. Default is the standard Milky Way average of 3.1.
-        model : {'ccm89', 'od94', 'gcc09', 'f99', 'fm07'}, optional
 
         Returns
         -------
         reddening : float or `~numpy.ndarray`
             Inverse of flux transmission fraction, equivalent to
-            ``10**(0.4 * extinction(wave))``. To deredden spectra,
+            ``10**(0.4 * model.evaluate(x))``. To deredden spectra,
             multiply flux values by these value(s). To redden spectra, divide
             flux values by these value(s).
 
@@ -202,9 +202,6 @@ class Extinction_gcc09(ExtinctionModel):
         res = cextinction.gcc09(self._process_wave(x).value, a_v, r_v)
         return res.reshape(x.shape) * u.mag
 
-_f99_xknots = 1.e4 / np.array([np.inf, 26500., 12200., 6000., 5470.,
-                               4670., 4110., 2700., 2600.])
-
 
 class Extinction_f99(ExtinctionModel):
     """
@@ -229,14 +226,16 @@ class Extinction_f99(ExtinctionModel):
     .. [2] Fitzpatrick, E. L. & Massa, D. 1990, ApJS, 72, 163
 
     """
+    _f99_xknots = 1.e4 / np.array([np.inf, 26500., 12200., 6000., 5470.,
+                                   4670., 4110., 2700., 2600.])
 
     def evaluate(self, x, a_v, r_v):
         if not HAS_SCIPY:
-            raise ImportError('To use this function scipy needs to be installed')
+            raise ImportError('Scipy needs to be installed to use this function')
 
-        kknots = cextinction.f99kknots(_f99_xknots, r_v)
+        kknots = cextinction.f99kknots(self._f99_xknots, r_v)
 
-        spline = splmake(_f99_xknots, kknots, order=3)
+        spline = splmake(self._f99_xknots, kknots, order=3)
 
         wave_shape = x.shape
         wave = self._process_wave(x)
@@ -289,8 +288,9 @@ class Extinction_fm07(ExtinctionModel):
 
         # fm07 knots for spline
         _fm07_r_v = 3.1
-        _fm07_xknots = np.array([0., 0.25, 0.50, 0.75, 1., 1.e4/5530., 1.e4/4000.,
-                                1.e4/3300., 1.e4/2700., 1.e4/2600.])
+        _fm07_xknots = np.array([0., 0.25, 0.50, 0.75, 1., 1.e4/5530.,
+                                 1.e4/4000., 1.e4/3300., 1.e4/2700.,
+                                 1.e4/2600.])
         _fm07_kknots = cextinction.fm07kknots(_fm07_xknots)
         _fm07_spline = splmake(_fm07_xknots, _fm07_kknots, order=3)
 
@@ -381,7 +381,7 @@ class Extinction_wd01(ExtinctionModel):
         super(Extinction_wd01, self).__init__(a_v=a_v, r_v=r_v, **kwargs)
 
         if not HAS_SCIPY:
-            raise ImportError('To use this function scipy needs to be installed')
+            raise ImportError('Scipy needs to be installed to use this function')
 
         prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
         _wd01_fnames = {'3.1': prefix + '_3.1B_60.txt',
@@ -457,7 +457,7 @@ class Extinction_d03(ExtinctionModel):
 
         super(Extinction_d03, self).__init__(a_v=a_v, r_v=r_v, **kwargs)
         if not HAS_SCIPY:
-            raise ImportError('To use this function scipy needs to be installed')
+            raise ImportError('Scipy needs to be installed to use this function')
 
         prefix = path.join('data', 'extinction_models', 'kext_albedo_WD_MW')
         _d03_fnames = {'3.1': prefix + '_3.1A_60_D03_all.txt',
@@ -522,31 +522,33 @@ class CCM(Fittable1DModel):
         nuvmask1 = (x > 3.3) & (x <= 8.0)
         nuvmask2 = (x >= 5.9) & (x <= 8.0)
         fuvmask = (x > 8.0) & (x <= 20.)
-        a = 0*x
-        b = 0*x
+        a = 0 * x
+        b = 0 * x
         # IR
         xir = x[irmask]**1.61
         a[irmask] = 0.574 * xir
         b[irmask] = -0.527 * xir
         # Optical (could do this better numerically)
         xopt = x[omask] - 1.82
-        a[omask] = (1.0 + 0.17699 * xopt - 0.50477 * xopt**2 - 0.02427 * xopt**3 +
-                    0.72085 * xopt**4 + 0.01979 * xopt**5 - 0.77530 * xopt**6 +
-                    0.32999 * xopt**7)
-        b[omask] = (0.0 + 1.41338 * xopt + 2.28305 * xopt**2 + 1.07233 * xopt**3 -
-                    5.38434 * xopt**4 - 0.62551 * xopt**5 + 5.30260 * xopt**6 -
-                    2.09002 * xopt**7)
+        a[omask] = (1.0 + 0.17699 * xopt - 0.50477 * xopt ** 2 -
+                    0.02427 * xopt ** 3 + 0.72085 * xopt ** 4 +
+                    0.01979 * xopt ** 5 - 0.77530 * xopt ** 6 +
+                    0.32999 * xopt ** 7)
+        b[omask] = (0.0 + 1.41338 * xopt + 2.28305 * xopt ** 2 +
+                    1.07233 * xopt ** 3 - 5.38434 * xopt ** 4 -
+                    0.62551 * xopt ** 5 + 5.30260 * xopt ** 6 -
+                    2.09002 * xopt ** 7)
         # Near UV
         xnuv1 = x[nuvmask1]
-        a[nuvmask1] = 1.752 - 0.316 * xnuv1 - 0.104 / (0.341 + (xnuv1-4.67)**2)
-        b[nuvmask1] = - 3.090 + 1.825 * xnuv1 + 1.206 / (0.263 + (xnuv1-4.62)**2)
+        a[nuvmask1] = 1.752 - 0.316 * xnuv1 - 0.104 / (0.341 + (xnuv1-4.67) ** 2)
+        b[nuvmask1] = - 3.090 + 1.825 * xnuv1 + 1.206 / (0.263 + (xnuv1-4.62) ** 2)
         xnuv2 = x[nuvmask2] - 5.9
-        a[nuvmask2] += -0.04473 * xnuv2**2 - 0.009779 * xnuv2**3
-        b[nuvmask2] += 0.21300 * xnuv2**2 + 0.120700 * xnuv2**3
+        a[nuvmask2] += -0.04473 * xnuv2 ** 2 - 0.009779 * xnuv2 ** 3
+        b[nuvmask2] += 0.21300 * xnuv2 ** 2 + 0.120700 * xnuv2 ** 3
 
         # Far UV
         xfuv = x[fuvmask] - 8.0
-        a[fuvmask] = -1.073 - 0.628 * xfuv + 0.137 * xfuv**2 - 0.070 * xfuv**3
-        b[fuvmask] = 13.670 + 4.257 * xfuv - 0.420 * xfuv**2 + 0.374 * xfuv**3
+        a[fuvmask] = -1.073 - 0.628 * xfuv + 0.137 * xfuv ** 2 - 0.070 * xfuv ** 3
+        b[fuvmask] = 13.670 + 4.257 * xfuv - 0.420 * xfuv ** 2 + 0.374 * xfuv ** 3
 
         return 10 ** (-0.4 * ebmv * (r_v * a + b))
