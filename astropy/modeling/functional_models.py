@@ -1425,7 +1425,6 @@ class Moffat2D(Fittable2DModel):
         return [d_A, d_x_0, d_y_0, d_gamma, d_alpha]
 
 
-# Code from Perry. The math doesn't seem right
 class BipolarGaussian(Fittable1DModel):
     """
     A two-faced gaussian based on the version in stsdas.contrib.specfit
@@ -1436,38 +1435,41 @@ class BipolarGaussian(Fittable1DModel):
         Total flux
     mean : float
         Maximum of the dual faced Gaussian
-    fwhm : float
-        Full width at half maximum. Units are in km/s
+    stddev : float
+        The standard deviation of the Gaussian
     skew : float
         Skew factor for sigma
 
     Notes
     -----
-    Effectively, this gaussian has two different sigmas on each side of the
-    mean. For values less than the mean, the sigma is as specified. For values
-    greater than the mean, the new sigma = skew * specified sigma
+    Effectively, this gaussian has two different standard deviations on each
+    side of the mean. For values less than the mean, the stddev is as
+    specified. For values greater than the mean, the new
+    stddev = skew * specified stddev
 
-    Units for fwhm are km/s. Norm represents total flux (presumably in
-    arbitrary units). Mean is the maximum of the dual faced gaussian. The units
-    of mean and x should be consistent.
+    Norm represents total flux (presumably in arbitrary units). Mean is the
+    maximum of the dual faced gaussian. The units of mean and x should be
+    consistent.
     """
 
     norm = Parameter(default=1.)
     mean = Parameter(default=0.)
-    fwhm = Parameter(default=1.)
+    stddev = Parameter(default=1.)
     skew = Parameter(default=1.)
 
+    input_units = 'mean'  # Input must have same units as mean
+    output_units = 'amplitude'  # Output must have same units as amplitude
+
     @staticmethod
-    def evaluate(x, norm, mean, fwhm, skew):
-        """A two-faced Gaussian model function"""
+    def evaluate(x, norm, mean, stddev, skew):
+        """A bipolar Gaussian model function"""
         sqrt2pi = np.sqrt(2. * np.pi)
-        sigma = mean * fwhm / c.to('km/s').value / 2.354820044
         val = 0. * x
-        lowerx = (x > (mean - 10*sigma)) & (x < mean)
-        upperx = (x < (mean + 10*sigma)) & (x > mean)
-        term = - ((x-mean)/sigma) ** 2 / 2.
-        val[lowerx] = 2 * norm * np.exp(term[lowerx]) / sigma / sqrt2pi / (1. + skew)
-        val[upperx] = 2 * norm * np.exp(term[upperx]/skew**2) / sigma / sqrt2pi / (1. + skew)
+        lowerx = (x > (mean - 10 * stddev)) & (x < mean)
+        upperx = (x < (mean + 10 * stddev)) & (x > mean)
+        term = - ((x-mean)/stddev) ** 2 / 2.
+        val[lowerx] = 2 * norm * np.exp(term[lowerx]) / stddev / sqrt2pi / (1. + skew)
+        val[upperx] = 2 * norm * np.exp(term[upperx]/skew ** 2) / stddev / sqrt2pi / (1. + skew)
         return val
 
 
