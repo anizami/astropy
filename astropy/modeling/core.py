@@ -43,6 +43,7 @@ from .utils import (array_repr_oneline, check_broadcast, combine_labels,
                     IncompatibleShapeError, AliasDict)
 
 from .parameters import Parameter, InputParameterError
+from . import binning
 
 
 __all__ = ['Model', 'FittableModel', 'Fittable1DModel', 'Fittable2DModel',
@@ -1391,6 +1392,57 @@ class Fittable1DModel(FittableModel):
 
     inputs = ('x',)
     outputs = ('y',)
+
+
+    def binned_flux(self, x, binned_x, cython=False):
+
+        # Find the edges of the bins
+        if binned_x.ndim != 1:
+            raise ValueError('binned_x input array must be 1D.')
+        if binned_x.size < 2:
+            raise ValueError('binned_x input must have at least two values.')
+        bin_edges = np.empty(binned_x.size + 1)
+        bin_edges[1:-1] = (binned_x[1:] + binned_x[:-1]) / 2.
+        #compute the first and last by making them symmetric
+        bin_edges[0] = binned_x[0] - (bin_edges[1] - binned_x[0])
+        bin_edges[-1] = binned_x[-1] + (binned_x[-1] - bin_edges[-2])
+
+        # Merge the x array and the binned_x
+        MERGETHRESH = 1.e-12
+        merged_x = np.union1d(np.union1d(x, bin_edges), binned_x)
+        delta = merged_x[1:] - merged_x[:-1]
+
+        if not (delta > MERGETHRESH).all():
+            newlen = len(delta[delta > MERGETHRESH]) + 1
+            newmerged = np.zeros(newlen, dtype=merged_array.dtype)
+            newmerged[:-1] = merged_array[:-1][delta > MERGETHRESH]
+            newmerged[-1] = merged_array[-1]
+            merged_array = newmerged
+
+        # spwave = merged_x
+        indices = np.searchsorted(merged_x, bin_edges)
+        _indices = np.array(indices[:-1], dtype=int)
+        _indices_last = np.array(indices[1:], dtype=int)
+
+        y = self(merged_x)
+        avg_y = (y[1:] + y[:-1]) / 2.0
+        _deltax = merged_x[1:] - merged_x[:-1]
+
+        if cython:
+            binned_y = binning.calcbinflux(len(binned_x), _indices, _indices_last,
+                                       avg_y, _deltax)
+
+        else:
+            binned_y = np.empty(shape=binned_x.shape, dtype=np.float64)
+            for i in range(len(_indices)):
+                first = _indices[i]
+                last = _indices_last[i]
+                delta_sum = np.sum(_deltax[first:last])
+                # if delta_sum == 0:
+                #     raise ZeroDivisionError
+                binned_y[i] = np.sum(avg_y[first:last] * _deltax[first:last]) / delta_sum
+
+        return binned_y
 
 
 class Fittable2DModel(FittableModel):
