@@ -420,7 +420,6 @@ class Extinction_wd01(ExtinctionModel):
         wave = self._process_wave(x)
         x = (1 / wave).to('1/micron')
         res = a_v * self._spline(x.value)
-
         return res.reshape(wave_shape) * u.mag
 
 
@@ -494,5 +493,4 @@ class Extinction_d03(ExtinctionModel):
         wave = self._process_wave(x)
         x = (1 / wave).to('1/micron')
         res = a_v * self._spline(x.value)
-
         return res.reshape(wave_shape) * u.mag
